@@ -99,7 +99,7 @@ contract VaultWstEth is IVault {
         , 
         uint256 updatedAt, 
       ) = oracle.latestRoundData();
-      if (block.timestamp > updatedAt + STALE_DATA_TIMEOUT) revert StaleData();
+      if (block.timestamp > updatedAt + STALE_DATA_TIMEOUT) revert StaleData(); // @issue stETH/USD has a heartbeat of 1h, so this will still accept stale data for 30 minutes
       return answer.toUint256()                        // 1e8
              * IWstETH(address(asset)).stEthPerToken() // 1e18
              / 1e18;

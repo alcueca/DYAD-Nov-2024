@@ -12,6 +12,8 @@ import {KerosineDenominator}  from "../staking/KerosineDenominator.sol";
 import {ERC20}           from "@solmate/src/tokens/ERC20.sol";
 import {SafeTransferLib} from "@solmate/src/utils/SafeTransferLib.sol";
 
+import "forge-std/console2.sol";
+
 contract UnboundedKerosineVault is KerosineVault {
   using SafeTransferLib for ERC20;
 
@@ -44,7 +46,7 @@ contract UnboundedKerosineVault is KerosineVault {
     external 
       onlyOwner
   {
-    kerosineDenominator = _kerosineDenominator;
+    kerosineDenominator = _kerosineDenominator; // @info bricked until this is set
   }
 
   function assetPrice() 
@@ -53,17 +55,20 @@ contract UnboundedKerosineVault is KerosineVault {
     override
     returns (uint) {
       uint tvl;
-      address[] memory vaults = kerosineManager.getVaults();
+      address[] memory vaults = kerosineManager.getVaults(); // @info These would be the weth and wstETH vaults
       uint numberOfVaults = vaults.length;
-      for (uint i = 0; i < numberOfVaults; i++) {
+      for (uint i = 0; i < numberOfVaults; i++) { // @info USD value of non-kerosine vaults
         Vault vault = Vault(vaults[i]);
         tvl += vault.asset().balanceOf(address(vault)) 
                 * vault.assetPrice() * 1e18
                 / (10**vault.asset().decimals()) 
                 / (10**vault.oracle().decimals());
       }
-      uint numerator   = tvl - dyad.totalSupply();
-      uint denominator = kerosineDenominator.denominator();
-      return numerator * 1e8 / denominator;
+      console2.log("tvl", tvl);
+      console2.log("dyad.totalSupply()", dyad.totalSupply());
+      // @issue For some reason the tvl is much higher than the dyad supply.
+      uint numerator   = tvl - dyad.totalSupply(); // @lead supplies are often easy to manipulate
+      uint denominator = kerosineDenominator.denominator(); // @info Circulating Kerosine supply
+      return numerator * 1e8 / denominator; // @info 1e8 so that is consistent with other USD price feeds
   }
 }

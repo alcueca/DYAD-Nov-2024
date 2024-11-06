@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.17;
 
-import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol"; // @lead Consider digging into this contract
 import {Owned}         from "@solmate/src/auth/Owned.sol";
 
 contract KerosineManager is Owned(msg.sender) {
@@ -47,6 +47,6 @@ contract KerosineManager is Owned(msg.sender) {
     external 
     view 
     returns (bool) {
-      return vaults.contains(vault);
+      return vaults.contains(vault); // @lead This can be changed in real time by the admin
   }
 }

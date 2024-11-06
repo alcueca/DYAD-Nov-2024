@@ -122,6 +122,7 @@ contract VaultManager is IVaultManager {
     emit BurnDyad(id, amount, msg.sender);
   }
 
+  // @info Redeem Dyad at $1 for the underlying asset
   function redeemDyad(
     uint    id,
     address vault,
@@ -136,7 +137,7 @@ contract VaultManager is IVaultManager {
       uint asset = amount 
                     * (10**(_vault.oracle().decimals() + _vault.asset().decimals())) 
                     / _vault.assetPrice() 
-                    / 1e18;
+                    / 1e18; // @info Convert the amount of Dyad/USD to the amount of the underlying asset
       withdraw(id, vault, asset, to);
       emit RedeemDyad(id, vault, amount, to);
       return asset;
@@ -152,17 +153,17 @@ contract VaultManager is IVaultManager {
     {
       uint cr = collatRatio(id);
       if (cr >= MIN_COLLATERIZATION_RATIO) revert CrTooHigh();
-      dyad.burn(id, msg.sender, dyad.mintedDyad(address(this), id));
+      dyad.burn(id, msg.sender, dyad.mintedDyad(address(this), id)); // @info The liquidator burns Dyad to cancel all of the dNFT's debt
 
-      uint cappedCr               = cr < 1e18 ? 1e18 : cr;
+      uint cappedCr               = cr < 1e18 ? 1e18 : cr; // @info If the CR is less than 100%, it is set to 100% // @lead What would actually happen then?
       uint liquidationEquityShare = (cappedCr - 1e18).mulWadDown(LIQUIDATION_REWARD);
       uint liquidationAssetShare  = (liquidationEquityShare + 1e18).divWadDown(cappedCr);
 
       uint numberOfVaults = vaults[id].length();
-      for (uint i = 0; i < numberOfVaults; i++) {
-          Vault vault      = Vault(vaults[id].at(i));
-          uint  collateral = vault.id2asset(id).mulWadUp(liquidationAssetShare);
-          vault.move(id, to, collateral);
+      for (uint i = 0; i < numberOfVaults; i++) { // @info With the debt cleared up, we move the collateral to the user
+          Vault vault      = Vault(vaults[id].at(i)); // @lead Does the line below reverse the math to move 100 + cr_surplus * reward of the collateral?
+          uint  collateral = vault.id2asset(id).mulWadUp(liquidationAssetShare); // @lead What does rounding up here mean?
+          vault.move(id, to, collateral); // @lead If a user liquidates itself (id == to) 
       }
       emit Liquidate(id, msg.sender, to);
   }
@@ -173,7 +174,7 @@ contract VaultManager is IVaultManager {
     public 
     view
     returns (uint) {
-      uint _dyad = dyad.mintedDyad(address(this), id);
+      uint _dyad = dyad.mintedDyad(address(this), id); // @lead If the VaultManager changes, debt for each dNFT is reduced to zero, and the CR is infinite.
       if (_dyad == 0) return type(uint).max;
       return getTotalUsdValue(id).divWadDown(_dyad);
   }
@@ -186,10 +187,10 @@ contract VaultManager is IVaultManager {
     returns (uint) {
       uint totalUsdValue;
       uint numberOfVaults = vaults[id].length(); 
-      for (uint i = 0; i < numberOfVaults; i++) {
-        Vault vault = Vault(vaults[id].at(i));
+      for (uint i = 0; i < numberOfVaults; i++) { // @lead If there would be a chance to reenter, we might be able to reorder the vaults and alter the count
+        Vault vault = Vault(vaults[id].at(i)); // @info get the vault for dNFT `id` at position `i`
         uint usdValue;
-        if (vaultLicenser.isLicensed(address(vault))) {
+        if (vaultLicenser.isLicensed(address(vault))) { // @lead Governance unlicensing a vault would send many into liquidation
           usdValue = vault.getUsdValue(id);        
         }
         totalUsdValue += usdValue;

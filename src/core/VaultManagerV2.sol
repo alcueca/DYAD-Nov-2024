@@ -44,7 +44,7 @@ contract VaultManagerV2 is IVaultManager, Initializable {
   }
   modifier isLicensed(address vault) {
     if (!vaultLicenser.isLicensed(vault)) revert NotLicensed(); _;
-  }
+  } // @issue QA unused
 
   constructor(
     DNft          _dNft,
@@ -85,7 +85,7 @@ contract VaultManagerV2 is IVaultManager, Initializable {
       isDNftOwner(id)
   {
     if (vaultsKerosene[id].length() >= MAX_VAULTS_KEROSENE) revert TooManyVaults();
-    if (!keroseneManager.isLicensed(vault))                 revert VaultNotLicensed();
+    if (!keroseneManager.isLicensed(vault))                 revert VaultNotLicensed(); // @issue This should be done by the vault licenser, not by the kerosene manager.
     if (!vaultsKerosene[id].add(vault))                     revert VaultAlreadyAdded();
     emit Added(id, vault);
   }
@@ -140,14 +140,14 @@ contract VaultManagerV2 is IVaultManager, Initializable {
     public
       isDNftOwner(id)
   {
-    if (idToBlockOfLastDeposit[id] == block.number) revert DepositedInSameBlock();
+    if (idToBlockOfLastDeposit[id] == block.number) revert DepositedInSameBlock(); // @lead any attacks enabled with flash loans can be enabled with own capital, only waiting one block to withdraw
     uint dyadMinted = dyad.mintedDyad(address(this), id);
     Vault _vault = Vault(vault);
     uint value = amount * _vault.assetPrice() 
-                  * 1e18 
+                  * 1e18 // @info This means that the value is an FP18
                   / 10**_vault.oracle().decimals() 
-                  / 10**_vault.asset().decimals();
-    if (getNonKeroseneValue(id) - value < dyadMinted) revert NotEnoughExoCollat();
+                  / 10**_vault.asset().decimals(); // @info asset to USD conversion of the withdrawn amount
+    if (getNonKeroseneValue(id) - value < dyadMinted) revert NotEnoughExoCollat(); // @lead getNonKeroseneValue should be an FP18, and is an FP8
     _vault.withdraw(id, to, amount);
     if (collatRatio(id) < MIN_COLLATERIZATION_RATIO)  revert CrTooLow(); 
   }
@@ -162,7 +162,7 @@ contract VaultManagerV2 is IVaultManager, Initializable {
       isDNftOwner(id)
   {
     uint newDyadMinted = dyad.mintedDyad(address(this), id) + amount;
-    if (getNonKeroseneValue(id) < newDyadMinted)     revert NotEnoughExoCollat();
+    if (getNonKeroseneValue(id) < newDyadMinted)     revert NotEnoughExoCollat(); // @lead getNonKeroseneValue should be an FP18, and is an FP8
     dyad.mint(id, to, amount);
     if (collatRatio(id) < MIN_COLLATERIZATION_RATIO) revert CrTooLow(); 
     emit MintDyad(id, amount, to);
@@ -235,7 +235,7 @@ contract VaultManagerV2 is IVaultManager, Initializable {
     returns (uint) {
       uint _dyad = dyad.mintedDyad(address(this), id);
       if (_dyad == 0) return type(uint).max;
-      return getTotalUsdValue(id).divWadDown(_dyad);
+      return getTotalUsdValue(id).divWadDown(_dyad); // @issue getTotalUsdValue is an FP8, and _dyad is an FP18. Also, CR is an FP18.
   }
 
   function getTotalUsdValue(
@@ -244,7 +244,7 @@ contract VaultManagerV2 is IVaultManager, Initializable {
     public 
     view
     returns (uint) {
-      return getNonKeroseneValue(id) + getKeroseneValue(id);
+      return getNonKeroseneValue(id) + getKeroseneValue(id); // @issue getNonKeroseneValue is an FP8 because it's in USD, and getKeroseneValue is an FP18 because it's in Kerosine
   }
 
   function getNonKeroseneValue(
@@ -282,7 +282,7 @@ contract VaultManagerV2 is IVaultManager, Initializable {
         }
         totalUsdValue += usdValue;
       }
-      return totalUsdValue;
+      return totalUsdValue; // @issue This should be an FP18
   }
 
   // ----------------- MISC ----------------- //

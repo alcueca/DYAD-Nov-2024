@@ -46,7 +46,7 @@ contract Vault is IVault {
     external 
       onlyVaultManager
   {
-    id2asset[id] += amount;
+    id2asset[id] += amount; // @lead There is no transfer associated with this, or check that the id exists.
     emit Deposit(id, amount);
   }
 
@@ -72,10 +72,11 @@ contract Vault is IVault {
       onlyVaultManager
   {
     id2asset[from] -= amount;
-    id2asset[to]   += amount;
+    id2asset[to]   += amount; // @info If from == to this is a no-op
     emit Move(from, to, amount);
   }
 
+  // @info Return the value of the asset in USD
   function getUsdValue(
     uint id
   )
@@ -84,11 +85,12 @@ contract Vault is IVault {
     returns (uint) {
       return id2asset[id] * assetPrice() 
               * 1e18 
-              / 10**oracle.decimals() 
-              / 10**asset.decimals();
+              / 10**oracle.decimals() // @lead The relevant oracles have 8 decimals
+              / 10**asset.decimals(); // @lead weth and wstEth have 18 decimals
   }
 
-  function assetPrice() 
+  // @info Return the price of the asset in USD
+  function assetPrice() // @lead asset price against USD?
     public 
     view 
     returns (uint) {
@@ -98,7 +100,8 @@ contract Vault is IVault {
         , 
         uint256 updatedAt, 
       ) = oracle.latestRoundData();
-      if (block.timestamp > updatedAt + STALE_DATA_TIMEOUT) revert StaleData();
+      if (block.timestamp > updatedAt + STALE_DATA_TIMEOUT) revert StaleData(); // @lead check heartbeat for tokens in scope, some might be longer than 90 minutes
+      // @issue wstETH/USD has a heartbeat of 24h, so this will revert if there aren't price movements above 0.5%for more than 90m.
       return answer.toUint256();
   }
 }

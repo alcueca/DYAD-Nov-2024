@@ -43,6 +43,6 @@ contract Dyad is ERC20("DYAD Stable", "DYAD", 18), IDyad {
       licensedVaultManager 
     {
       _burn(from, amount);
-      mintedDyad[msg.sender][id] -= amount;
+      mintedDyad[msg.sender][id] -= amount; // @lead we can burn from someone without their approval
   }
 }
