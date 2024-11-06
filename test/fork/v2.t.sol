@@ -23,6 +23,10 @@ abstract contract V2Start is Test, Parameters, IERC721Receiver {
 
   function setUp() public virtual {
     contracts = new DeployV2().run();
+
+    // FIX: Add the vault manager to the OLD licenser
+    vm.prank(MAINNET_OWNER);
+    Licenser(0xd8bA5e720Ddc7ccD24528b9BA3784708528d0B85).add(address(contracts.vaultManager));
   }
 }
 
@@ -130,10 +134,6 @@ contract V2WithDepositsTest is V2WithDeposits {
   }
 
   function testMintDyad() public {
-    // FIX: Add the vault manager to the OLD licenser
-    vm.prank(MAINNET_OWNER);
-    Licenser(0xd8bA5e720Ddc7ccD24528b9BA3784708528d0B85).add(address(contracts.vaultManager));
-
     // Mint dyad
     contracts.vaultManager.mintDyad(id, 1000 ether, address(this));
   }
