@@ -43,7 +43,7 @@ contract DeployV2 is Script, Parameters {
       DNft(MAINNET_DNFT),
       Dyad(MAINNET_DYAD),
       vaultLicenser
-    ); // @issue vaultManager needs to be licensed on the old licenser at 0xd8bA5e720Ddc7ccD24528b9BA3784708528d0B85 for Dyad to allow minting.
+    ); // @reported vaultManager needs to be licensed on the old licenser at 0xd8bA5e720Ddc7ccD24528b9BA3784708528d0B85 for Dyad to allow minting.
 
     // weth vault
     Vault ethVault = new Vault(
@@ -92,7 +92,7 @@ contract DeployV2 is Script, Parameters {
 
     vaultLicenser.add(address(ethVault));
     vaultLicenser.add(address(wstEth));
-    vaultLicenser.add(address(unboundedKerosineVault)); // @issue The unboundedKerosineVault should be licensed to the KerosineManager. Because Kerosene can be added as a non-kerosene collateral, we can break things
+    vaultLicenser.add(address(unboundedKerosineVault)); // @reported The unboundedKerosineVault should be licensed to the KerosineManager. Because Kerosene can be added as a non-kerosene collateral, we can break things
     // vaultLicenser.add(address(boundedKerosineVault));
 
     vaultLicenser.transferOwnership(MAINNET_OWNER);

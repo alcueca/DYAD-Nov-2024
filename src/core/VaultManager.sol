@@ -136,7 +136,7 @@ contract VaultManager is IVaultManager {
       Vault _vault = Vault(vault);
       uint asset = amount 
                     * (10**(_vault.oracle().decimals() + _vault.asset().decimals())) 
-                    / _vault.assetPrice() 
+                    / _vault.assetPrice() // @info This is an FP18
                     / 1e18; // @info Convert the amount of Dyad/USD to the amount of the underlying asset
       withdraw(id, vault, asset, to);
       emit RedeemDyad(id, vault, amount, to);

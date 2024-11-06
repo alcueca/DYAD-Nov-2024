@@ -65,7 +65,7 @@ abstract contract KerosineVault is IVault, Owned(msg.sender) {
     public
     view 
     returns (uint) {
-      return id2asset[id] * assetPrice() / 1e8; // @info 1e8 because we are using chainlink USD oracles
+      return id2asset[id] * assetPrice() / 1e8; // @info assetPrice() is an FP8, so the result is an FP18
   }
 
   function assetPrice() 

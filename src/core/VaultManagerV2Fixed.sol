@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.17;
 
+import {console2} from "forge-std/console2.sol";
+
 import {DNft}            from "./DNft.sol";
 import {Dyad}            from "./Dyad.sol";
 import {Licenser}        from "./Licenser.sol";
@@ -14,7 +16,7 @@ import {SafeTransferLib}   from "@solmate/src/utils/SafeTransferLib.sol";
 import {EnumerableSet}     from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {Initializable}     from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
-contract VaultManagerV2 is IVaultManager, Initializable {
+contract VaultManagerV2Fixed is IVaultManager, Initializable {
   using EnumerableSet     for EnumerableSet.AddressSet;
   using FixedPointMathLib for uint;
   using SafeTransferLib   for ERC20;
@@ -85,7 +87,7 @@ contract VaultManagerV2 is IVaultManager, Initializable {
       isDNftOwner(id)
   {
     if (vaultsKerosene[id].length() >= MAX_VAULTS_KEROSENE) revert TooManyVaults();
-    if (!keroseneManager.isLicensed(vault))                 revert VaultNotLicensed(); // @reported This should be done by the vault licenser, not by the kerosene manager.
+    if (!vaultLicenser.isLicensed(vault))                   revert VaultNotLicensed(); // FIX: Partially fixed, we should use a separate function for kerosene vaults.
     if (!vaultsKerosene[id].add(vault))                     revert VaultAlreadyAdded();
     emit Added(id, vault);
   }
@@ -128,7 +130,7 @@ contract VaultManagerV2 is IVaultManager, Initializable {
     Vault _vault = Vault(vault);
     _vault.asset().safeTransferFrom(msg.sender, address(vault), amount);
     _vault.deposit(id, amount);
-  } // @lead Users can deposit to vaults that they haven't added to their DNft.
+  }
 
   /// @inheritdoc IVaultManager
   function withdraw(
@@ -140,17 +142,17 @@ contract VaultManagerV2 is IVaultManager, Initializable {
     public
       isDNftOwner(id)
   {
-    if (idToBlockOfLastDeposit[id] == block.number) revert DepositedInSameBlock(); // @lead any attacks enabled with flash loans can be enabled with own capital, only waiting one block to withdraw
+    if (idToBlockOfLastDeposit[id] == block.number) revert DepositedInSameBlock();
     uint dyadMinted = dyad.mintedDyad(address(this), id);
     Vault _vault = Vault(vault);
-    uint value = amount * _vault.assetPrice() // @info This is an FP18
-                  * 1e18 // @info This means that the value is an FP18
+    uint value = amount * _vault.assetPrice() 
+                  * 1e18
                   / 10**_vault.oracle().decimals() 
-                  / 10**_vault.asset().decimals(); // @info asset to USD conversion of the withdrawn amount
+                  / 10**_vault.asset().decimals();
     if (getNonKeroseneValue(id) - value < dyadMinted) revert NotEnoughExoCollat();
-    // @info vaults that become unlicensed can still withdraw, it's just that the assets they hold are valued at 0
-    _vault.withdraw(id, to, amount); // @info We withdraw first, which reduces the Kerosene price by reducing the surplus collateral. That means that it is harder to exactly calculate the value of kerosene as collateral, but the next line will be correct.
-    if (collatRatio(id) < MIN_COLLATERIZATION_RATIO)  revert CrTooLow();
+
+    _vault.withdraw(id, to, amount);
+    if (collatRatio(id) < MIN_COLLATERIZATION_RATIO)  revert CrTooLow(); 
   }
 
   /// @inheritdoc IVaultManager
@@ -164,7 +166,7 @@ contract VaultManagerV2 is IVaultManager, Initializable {
   {
     uint newDyadMinted = dyad.mintedDyad(address(this), id) + amount;
     if (getNonKeroseneValue(id) < newDyadMinted)     revert NotEnoughExoCollat();
-    dyad.mint(id, to, amount); // @info We mint first, which reduces the Kerosene price by increasing the debt. That means that it is harder to exactly calculate the value of kerosene as collateral, but the next line will be correct.
+    dyad.mint(id, to, amount);
     if (collatRatio(id) < MIN_COLLATERIZATION_RATIO) revert CrTooLow(); 
     emit MintDyad(id, amount, to);
   }
@@ -195,7 +197,7 @@ contract VaultManagerV2 is IVaultManager, Initializable {
       Vault _vault = Vault(vault);
       uint asset = amount 
                     * (10**(_vault.oracle().decimals() + _vault.asset().decimals())) 
-                    / _vault.assetPrice() // @info This is an FP18
+                    / _vault.assetPrice() 
                     / 1e18;
       withdraw(id, vault, asset, to);
       emit RedeemDyad(id, vault, amount, to);
@@ -219,7 +221,7 @@ contract VaultManagerV2 is IVaultManager, Initializable {
       uint liquidationEquityShare = (cappedCr - 1e18).mulWadDown(LIQUIDATION_REWARD);
       uint liquidationAssetShare  = (liquidationEquityShare + 1e18).divWadDown(cappedCr);
 
-      uint numberOfVaults = vaults[id].length(); // @reported The kerosine vaults are not included in this, and can't be liquidated.
+      uint numberOfVaults = vaults[id].length();
       for (uint i = 0; i < numberOfVaults; i++) {
           Vault vault      = Vault(vaults[id].at(i));
           uint  collateral = vault.id2asset(id).mulWadUp(liquidationAssetShare);
@@ -256,14 +258,16 @@ contract VaultManagerV2 is IVaultManager, Initializable {
     returns (uint) {
       uint totalUsdValue;
       uint numberOfVaults = vaults[id].length(); 
+      console2.log("Number of NonKerosene vaults: %s", numberOfVaults);
       for (uint i = 0; i < numberOfVaults; i++) {
         Vault vault = Vault(vaults[id].at(i));
         uint usdValue;
         if (vaultLicenser.isLicensed(address(vault))) {
-          usdValue = vault.getUsdValue(id); // @info This is an FP18
+          usdValue = vault.getUsdValue(id);        
         }
         totalUsdValue += usdValue;
       }
+      console2.log("Total NonKerosene value: %s", totalUsdValue);
       return totalUsdValue;
   }
 
@@ -275,16 +279,18 @@ contract VaultManagerV2 is IVaultManager, Initializable {
     returns (uint) {
       uint totalUsdValue;
       uint numberOfVaults = vaultsKerosene[id].length(); 
+      console2.log("Number of Kerosene vaults: %s", numberOfVaults);
       for (uint i = 0; i < numberOfVaults; i++) {
         Vault vault = Vault(vaultsKerosene[id].at(i));
         uint usdValue;
-        if (keroseneManager.isLicensed(address(vault))) {
-          usdValue = vault.getUsdValue(id);
+        if (vaultLicenser.isLicensed(address(vault))) { // FIX: Partially fixed, we should use a separate function for kerosene vaults.
+          usdValue = vault.getUsdValue(id);        
         }
         totalUsdValue += usdValue;
       }
+      console2.log("Total Kerosene value: %s", totalUsdValue);
       return totalUsdValue;
-  } // @lead What if there is no debt? What's the kerosene price then?
+  }
 
   // ----------------- MISC ----------------- //
 
