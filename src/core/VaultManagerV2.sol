@@ -85,7 +85,8 @@ contract VaultManagerV2 is IVaultManager, Initializable {
       isDNftOwner(id)
   {
     if (vaultsKerosene[id].length() >= MAX_VAULTS_KEROSENE) revert TooManyVaults();
-    if (!keroseneManager.isLicensed(vault))                 revert VaultNotLicensed(); // @issue This should be done by the vault licenser, not by the kerosene manager.
+//    if (!keroseneManager.isLicensed(vault))                 revert VaultNotLicensed(); // @issue This should be done by the vault licenser, not by the kerosene manager.
+    if (!vaultLicenser.isLicensed(vault))                   revert VaultNotLicensed(); // FIX
     if (!vaultsKerosene[id].add(vault))                     revert VaultAlreadyAdded();
     emit Added(id, vault);
   }
