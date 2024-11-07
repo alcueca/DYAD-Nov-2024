@@ -14,7 +14,7 @@ import {SafeTransferLib} from "@solmate/src/utils/SafeTransferLib.sol";
 
 import "forge-std/console2.sol";
 
-contract UnboundedKerosineVault is KerosineVault {
+contract UnboundedKerosineVaultFixed is KerosineVault {
   using SafeTransferLib for ERC20;
 
   Dyad                 public immutable dyad;
@@ -46,7 +46,7 @@ contract UnboundedKerosineVault is KerosineVault {
     external 
       onlyOwner
   {
-    kerosineDenominator = _kerosineDenominator; // @info bricked until this is set
+    kerosineDenominator = _kerosineDenominator;
   }
 
   function assetPrice() 
@@ -55,17 +55,17 @@ contract UnboundedKerosineVault is KerosineVault {
     override
     returns (uint) {
       uint tvl;
-      address[] memory vaults = kerosineManager.getVaults(); // @info These would be the weth and wstETH vaults
+      address[] memory vaults = kerosineManager.getVaults();
       uint numberOfVaults = vaults.length;
-      for (uint i = 0; i < numberOfVaults; i++) { // @info USD value of non-kerosine vaults
+      for (uint i = 0; i < numberOfVaults; i++) {
         Vault vault = Vault(vaults[i]);
         tvl += vault.asset().balanceOf(address(vault)) 
                 * vault.assetPrice() * 1e18
                 / (10**vault.asset().decimals()) 
                 / (10**vault.oracle().decimals());
-      } // @info This is an FP18
-      uint numerator   = tvl - dyad.totalSupply(); // @reported H-01 There is a lot of DYAD minted for v1, while the TVL from the v1 collateral is not counted.
-      uint denominator = kerosineDenominator.denominator(); // @info Circulating Kerosine supply
-      return numerator * 1e8 / denominator; // @info 1e8 so that is consistent with other USD price feeds
+      }
+      uint numerator   = tvl - (dyad.totalSupply() - 11074181000000000000000); // FIX
+      uint denominator = kerosineDenominator.denominator();
+      return numerator * 1e8 / denominator;
   }
 }

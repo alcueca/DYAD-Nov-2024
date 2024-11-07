@@ -9,6 +9,8 @@ import {SafeTransferLib} from "@solmate/src/utils/SafeTransferLib.sol";
 import {ERC20}           from "@solmate/src/tokens/ERC20.sol";
 import {Owned}           from "@solmate/src/auth/Owned.sol";
 
+// @lead Diff with Vault.sol
+
 abstract contract KerosineVault is IVault, Owned(msg.sender) {
   using SafeTransferLib for ERC20;
 
@@ -63,7 +65,7 @@ abstract contract KerosineVault is IVault, Owned(msg.sender) {
     public
     view 
     returns (uint) {
-      return id2asset[id] * assetPrice() / 1e8;
+      return id2asset[id] * assetPrice() / 1e8; // @info assetPrice() is an FP8, so the result is an FP18
   }
 
   function assetPrice() 

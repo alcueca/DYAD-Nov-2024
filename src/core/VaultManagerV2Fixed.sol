@@ -1,23 +1,29 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.17;
 
-import {DNft}          from "./DNft.sol";
-import {Dyad}          from "./Dyad.sol";
-import {Licenser}      from "./Licenser.sol";
-import {Vault}         from "./Vault.sol";
-import {IVaultManager} from "../interfaces/IVaultManager.sol";
+import {console2} from "forge-std/console2.sol";
+
+import {DNft}            from "./DNft.sol";
+import {Dyad}            from "./Dyad.sol";
+import {Licenser}        from "./Licenser.sol";
+import {Vault}           from "./Vault.sol";
+import {IVaultManager}   from "../interfaces/IVaultManager.sol";
+import {KerosineManager} from "../../src/core/KerosineManager.sol";
 
 import {FixedPointMathLib} from "@solmate/src/utils/FixedPointMathLib.sol";
 import {ERC20}             from "@solmate/src/tokens/ERC20.sol";
 import {SafeTransferLib}   from "@solmate/src/utils/SafeTransferLib.sol";
 import {EnumerableSet}     from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import {Initializable}     from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
-contract VaultManager is IVaultManager {
+contract VaultManagerV2Fixed is IVaultManager, Initializable {
   using EnumerableSet     for EnumerableSet.AddressSet;
   using FixedPointMathLib for uint;
   using SafeTransferLib   for ERC20;
 
-  uint public constant MAX_VAULTS                = 5;
+  uint public constant MAX_VAULTS          = 5;
+  uint public constant MAX_VAULTS_KEROSENE = 5;
+
   uint public constant MIN_COLLATERIZATION_RATIO = 1.5e18; // 150%
   uint public constant LIQUIDATION_REWARD        = 0.2e18; //  20%
 
@@ -25,7 +31,12 @@ contract VaultManager is IVaultManager {
   Dyad     public immutable dyad;
   Licenser public immutable vaultLicenser;
 
+  KerosineManager public keroseneManager;
+
   mapping (uint => EnumerableSet.AddressSet) internal vaults; 
+  mapping (uint => EnumerableSet.AddressSet) internal vaultsKerosene; 
+
+  mapping (uint => uint) public idToBlockOfLastDeposit;
 
   modifier isDNftOwner(uint id) {
     if (dNft.ownerOf(id) != msg.sender)   revert NotOwner();    _;
@@ -35,18 +46,26 @@ contract VaultManager is IVaultManager {
   }
   modifier isLicensed(address vault) {
     if (!vaultLicenser.isLicensed(vault)) revert NotLicensed(); _;
-  }
+  } // @issue QA unused
 
   constructor(
-    DNft     _dNft,
-    Dyad     _dyad,
-    Licenser _licenser
+    DNft          _dNft,
+    Dyad          _dyad,
+    Licenser      _licenser
   ) {
     dNft          = _dNft;
     dyad          = _dyad;
     vaultLicenser = _licenser;
   }
 
+  function setKeroseneManager(KerosineManager _keroseneManager) 
+    external
+      initializer 
+    {
+      keroseneManager = _keroseneManager;
+  }
+
+  /// @inheritdoc IVaultManager
   function add(
       uint    id,
       address vault
@@ -60,6 +79,20 @@ contract VaultManager is IVaultManager {
     emit Added(id, vault);
   }
 
+  function addKerosene(
+      uint    id,
+      address vault
+  ) 
+    external
+      isDNftOwner(id)
+  {
+    if (vaultsKerosene[id].length() >= MAX_VAULTS_KEROSENE) revert TooManyVaults();
+    if (!vaultLicenser.isLicensed(vault))                   revert VaultNotLicensed(); // FIX: Partially fixed, we should use a separate function for kerosene vaults.
+    if (!vaultsKerosene[id].add(vault))                     revert VaultAlreadyAdded();
+    emit Added(id, vault);
+  }
+
+  /// @inheritdoc IVaultManager
   function remove(
       uint    id,
       address vault
@@ -72,32 +105,57 @@ contract VaultManager is IVaultManager {
     emit Removed(id, vault);
   }
 
+  function removeKerosene(
+      uint    id,
+      address vault
+  ) 
+    external
+      isDNftOwner(id)
+  {
+    if (Vault(vault).id2asset(id) > 0)     revert VaultHasAssets();
+    if (!vaultsKerosene[id].remove(vault)) revert VaultNotAdded();
+    emit Removed(id, vault);
+  }
+
+  /// @inheritdoc IVaultManager
   function deposit(
     uint    id,
     address vault,
     uint    amount
   ) 
     external 
-      isValidDNft(id) 
+      isValidDNft(id)
   {
+    idToBlockOfLastDeposit[id] = block.number;
     Vault _vault = Vault(vault);
     _vault.asset().safeTransferFrom(msg.sender, address(vault), amount);
     _vault.deposit(id, amount);
   }
 
+  /// @inheritdoc IVaultManager
   function withdraw(
     uint    id,
     address vault,
     uint    amount,
     address to
   ) 
-    public 
+    public
       isDNftOwner(id)
   {
-    Vault(vault).withdraw(id, to, amount);
-    if (collatRatio(id) < MIN_COLLATERIZATION_RATIO) revert CrTooLow(); 
+    if (idToBlockOfLastDeposit[id] == block.number) revert DepositedInSameBlock();
+    uint dyadMinted = dyad.mintedDyad(address(this), id);
+    Vault _vault = Vault(vault);
+    uint value = amount * _vault.assetPrice() 
+                  * 1e18
+                  / 10**_vault.oracle().decimals() 
+                  / 10**_vault.asset().decimals();
+    if (getNonKeroseneValue(id) - value < dyadMinted) revert NotEnoughExoCollat();
+
+    _vault.withdraw(id, to, amount);
+    if (collatRatio(id) < MIN_COLLATERIZATION_RATIO)  revert CrTooLow(); 
   }
 
+  /// @inheritdoc IVaultManager
   function mintDyad(
     uint    id,
     uint    amount,
@@ -106,11 +164,14 @@ contract VaultManager is IVaultManager {
     external 
       isDNftOwner(id)
   {
+    uint newDyadMinted = dyad.mintedDyad(address(this), id) + amount;
+    if (getNonKeroseneValue(id) < newDyadMinted)     revert NotEnoughExoCollat();
     dyad.mint(id, to, amount);
     if (collatRatio(id) < MIN_COLLATERIZATION_RATIO) revert CrTooLow(); 
     emit MintDyad(id, amount, to);
   }
 
+  /// @inheritdoc IVaultManager
   function burnDyad(
     uint id,
     uint amount
@@ -122,7 +183,7 @@ contract VaultManager is IVaultManager {
     emit BurnDyad(id, amount, msg.sender);
   }
 
-  // @info Redeem Dyad at $1 for the underlying asset
+  /// @inheritdoc IVaultManager
   function redeemDyad(
     uint    id,
     address vault,
@@ -136,13 +197,14 @@ contract VaultManager is IVaultManager {
       Vault _vault = Vault(vault);
       uint asset = amount 
                     * (10**(_vault.oracle().decimals() + _vault.asset().decimals())) 
-                    / _vault.assetPrice() // @info This is an FP18
-                    / 1e18; // @info Convert the amount of Dyad/USD to the amount of the underlying asset
+                    / _vault.assetPrice() 
+                    / 1e18;
       withdraw(id, vault, asset, to);
       emit RedeemDyad(id, vault, amount, to);
       return asset;
   }
 
+  /// @inheritdoc IVaultManager
   function liquidate(
     uint id,
     uint to
@@ -153,17 +215,17 @@ contract VaultManager is IVaultManager {
     {
       uint cr = collatRatio(id);
       if (cr >= MIN_COLLATERIZATION_RATIO) revert CrTooHigh();
-      dyad.burn(id, msg.sender, dyad.mintedDyad(address(this), id)); // @info The liquidator burns Dyad to cancel all of the dNFT's debt
+      dyad.burn(id, msg.sender, dyad.mintedDyad(address(this), id));
 
-      uint cappedCr               = cr < 1e18 ? 1e18 : cr; // @info If the CR is less than 100%, it is set to 100% // @lead What would actually happen then?
+      uint cappedCr               = cr < 1e18 ? 1e18 : cr;
       uint liquidationEquityShare = (cappedCr - 1e18).mulWadDown(LIQUIDATION_REWARD);
       uint liquidationAssetShare  = (liquidationEquityShare + 1e18).divWadDown(cappedCr);
 
       uint numberOfVaults = vaults[id].length();
-      for (uint i = 0; i < numberOfVaults; i++) { // @info With the debt cleared up, we move the collateral to the user
-          Vault vault      = Vault(vaults[id].at(i)); // @lead Does the line below reverse the math to move 100 + cr_surplus * reward of the collateral?
-          uint  collateral = vault.id2asset(id).mulWadUp(liquidationAssetShare); // @lead What does rounding up here mean?
-          vault.move(id, to, collateral); // @lead If a user liquidates itself (id == to) 
+      for (uint i = 0; i < numberOfVaults; i++) {
+          Vault vault      = Vault(vaults[id].at(i));
+          uint  collateral = vault.id2asset(id).mulWadUp(liquidationAssetShare);
+          vault.move(id, to, collateral);
       }
       emit Liquidate(id, msg.sender, to);
   }
@@ -174,7 +236,7 @@ contract VaultManager is IVaultManager {
     public 
     view
     returns (uint) {
-      uint _dyad = dyad.mintedDyad(address(this), id); // @lead If the VaultManager changes, debt for each dNFT is reduced to zero, and the CR is infinite.
+      uint _dyad = dyad.mintedDyad(address(this), id);
       if (_dyad == 0) return type(uint).max;
       return getTotalUsdValue(id).divWadDown(_dyad);
   }
@@ -185,12 +247,40 @@ contract VaultManager is IVaultManager {
     public 
     view
     returns (uint) {
+      return getNonKeroseneValue(id) + getKeroseneValue(id);
+  }
+
+  function getNonKeroseneValue(
+    uint id
+  ) 
+    public 
+    view
+    returns (uint) {
       uint totalUsdValue;
       uint numberOfVaults = vaults[id].length(); 
-      for (uint i = 0; i < numberOfVaults; i++) { // @lead If there would be a chance to reenter, we might be able to reorder the vaults and alter the count
-        Vault vault = Vault(vaults[id].at(i)); // @info get the vault for dNFT `id` at position `i`
+      for (uint i = 0; i < numberOfVaults; i++) {
+        Vault vault = Vault(vaults[id].at(i));
         uint usdValue;
-        if (vaultLicenser.isLicensed(address(vault))) { // @lead Governance unlicensing a vault would send many into liquidation
+        if (vaultLicenser.isLicensed(address(vault))) {
+          usdValue = vault.getUsdValue(id);        
+        }
+        totalUsdValue += usdValue;
+      }
+      return totalUsdValue;
+  }
+
+  function getKeroseneValue(
+    uint id
+  ) 
+    public 
+    view
+    returns (uint) {
+      uint totalUsdValue;
+      uint numberOfVaults = vaultsKerosene[id].length(); 
+      for (uint i = 0; i < numberOfVaults; i++) {
+        Vault vault = Vault(vaultsKerosene[id].at(i));
+        uint usdValue;
+        if (vaultLicenser.isLicensed(address(vault))) { // FIX: Partially fixed, we should use a separate function for kerosene vaults.
           usdValue = vault.getUsdValue(id);        
         }
         totalUsdValue += usdValue;
