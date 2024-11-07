@@ -64,7 +64,7 @@ contract UnboundedKerosineVault is KerosineVault {
                 / (10**vault.asset().decimals()) 
                 / (10**vault.oracle().decimals());
       } // @info This is an FP18
-      uint numerator   = tvl - dyad.totalSupply(); // @reported There is a lot of DYAD minted for v1, while the TVL from the v1 collateral is not counted.
+      uint numerator   = tvl - dyad.totalSupply(); // @reported H-01 There is a lot of DYAD minted for v1, while the TVL from the v1 collateral is not counted.
       uint denominator = kerosineDenominator.denominator(); // @info Circulating Kerosine supply
       return numerator * 1e8 / denominator; // @info 1e8 so that is consistent with other USD price feeds
   }

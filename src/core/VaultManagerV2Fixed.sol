@@ -258,7 +258,6 @@ contract VaultManagerV2Fixed is IVaultManager, Initializable {
     returns (uint) {
       uint totalUsdValue;
       uint numberOfVaults = vaults[id].length(); 
-      console2.log("Number of NonKerosene vaults: %s", numberOfVaults);
       for (uint i = 0; i < numberOfVaults; i++) {
         Vault vault = Vault(vaults[id].at(i));
         uint usdValue;
@@ -267,7 +266,6 @@ contract VaultManagerV2Fixed is IVaultManager, Initializable {
         }
         totalUsdValue += usdValue;
       }
-      console2.log("Total NonKerosene value: %s", totalUsdValue);
       return totalUsdValue;
   }
 
@@ -279,7 +277,6 @@ contract VaultManagerV2Fixed is IVaultManager, Initializable {
     returns (uint) {
       uint totalUsdValue;
       uint numberOfVaults = vaultsKerosene[id].length(); 
-      console2.log("Number of Kerosene vaults: %s", numberOfVaults);
       for (uint i = 0; i < numberOfVaults; i++) {
         Vault vault = Vault(vaultsKerosene[id].at(i));
         uint usdValue;
@@ -288,7 +285,6 @@ contract VaultManagerV2Fixed is IVaultManager, Initializable {
         }
         totalUsdValue += usdValue;
       }
-      console2.log("Total Kerosene value: %s", totalUsdValue);
       return totalUsdValue;
   }
 

